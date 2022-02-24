@@ -3,7 +3,11 @@ import haiku as hk
 import jax
 import jax.numpy as jnp
 import dm_env
-from tyimping import Tuple
+from typing import Tuple, NamedTuple
+
+class AgentOutput(NamedTuple):
+    action: int
+
 
 class DQNAgent():
     def __init__(self, net_apply):
@@ -16,15 +20,9 @@ class DQNAgent():
         params: hk.Params,
         rng: jnp.ndarray,
         timestep: dm_env.TimeStep
-    ) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    ) -> AgentOutput:
         timestep = jax.tree_map(lambda t: jnp.expand_dims(t, 0), timestep)
-        Q_values, _ = self._net(params, timestep) # This should be (n_networks, 1, action_shape) (no it doesn't, each agent will use a specific model)
-        
-        # Here something has to happen to combine Q values # No, we will be using thompson sampling
-
-        # A naive way of using thompson sampling is to supply the step function with an index i and then indexing the output of the neural network with i
-        # otherwise it is necessary to mess around with different apply functions.
-
-        # I think however that jax compilation might make this "naive" way just as fast as the correct way.
-        action = jnp.argmax(Q_values) 
+        Q_values, _ = self._net(params, timestep) 
+        action = jnp.argmax(Q_values)
+        return AgentOutput(action=action)
     
