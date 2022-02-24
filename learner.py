@@ -10,6 +10,7 @@ import rlax
 import util
 from functools import partial
 from replaybuffer import ReplayBuffer
+import itertools
 
 class Learner:
     def __init__(
@@ -31,6 +32,8 @@ class Learner:
         self._target_params = self._params
         self._lambda = lambda_
         self._replaybuffer = replaybuffer
+        self._batch_size = batch_size
+        self._done = False
 
     def get_params(self) -> hk.Params:
         return self._params
@@ -59,9 +62,10 @@ class Learner:
     def update(self, 
         params: hk.Params,
         opt_state: optax.OptState,
+        target_params: hk.Params,
         batch: util.Trajectory,
     ) -> Tuple[hk.Params, optax.OptState, Dict]:
-        (_, logs), grads = jax.value_and_grad(self._loss, has_aux=True)(params, batch)
+        (_, logs), grads = jax.value_and_grad(self._loss, has_aux=True)(params, target_params, batch)
         grad_norm_unclipped = optax.l2_norm(grads)
         updates, opt_state = self._opt.update(grads, opt_state)
         params = optax.apply_updates(params, updates)
@@ -71,4 +75,24 @@ class Learner:
         return params, opt_state, logs
 
     def sample_batch(self):
-        pass
+        batch = self._replaybuffer.sample(self._batch_size)
+        return batch
+
+    def run(self, max_iterations: int = -1):
+        num_frames = 0
+        
+        params = self._params
+        target_params = self._target_params
+        opt_state = self._opt.init(params)
+
+        steps = range(max_iterations) if max_iterations != -1 else itertools.count()
+        for _ in steps:
+            batch = self.sample_batch()
+            params, opt_state, logs = self.update(params, opt_state, batch)
+            self.params = params
+
+            num_frames = self._replaybuffer.get_num_frames()
+            logs.update({
+                'num_frames': num_frames,
+            })
+        self._done = True
