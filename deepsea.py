@@ -3,12 +3,10 @@ import numpy as np
 from typing import NamedTuple, Tuple, Union
 import matplotlib.pyplot as plt # type: ignore
 from matplotlib.animation import FuncAnimation # type: ignore
+from dm_env import TimeStep
+import dm_env
 
-
-class TimeStep(NamedTuple):
-    observation: np.ndarray
-    reward: Union[float, None]
-    pcont: float
+# Make this work with dm_env
 
 class DeepSea(object):
 
@@ -20,7 +18,7 @@ class DeepSea(object):
     self._size = size
     self._move_cost = 0.01 / size
     self._goal_reward = 1.
-
+    self._discount = 0.99
     self._column = 0
     self._row = 0
 
@@ -55,18 +53,18 @@ class DeepSea(object):
     if self._row == self._size:
       observation = self._get_observation(self._row-1, self._column)
       self._reset_next_step = True
-      return TimeStep(reward=reward, observation=observation, pcont=0.)
+      return TimeStep(reward=reward, observation=observation, step_type=dm_env.StepType.MID, discount_factor=self._discount)
     else:
       observation = self._get_observation(self._row, self._column)
-      return TimeStep(reward=reward, observation=observation, pcont=1.)
+      return TimeStep(reward=reward, observation=observation, step_type=dm_env.StepType.LAST, discount_factor=self._discount)
 
   def reset(self) -> TimeStep:
     self._reset_next_step = False
     self._column = 0
     self._row = 0
     observation = self._get_observation(self._row, self._column)
-
-    return TimeStep(reward=None, observation=observation, pcont=1.)
+    reward = None
+    return TimeStep(reward=reward, observation=observation, step_type=dm_env.StepType.FIRST, discount_factor=self._discount)
   
   def _get_observation(self, row, column) -> np.ndarray:
     observation = np.zeros(shape=(self._size, self._size), dtype=np.float32)
