@@ -68,6 +68,7 @@ if __name__ == '__main__':
     env_builder = catch.Catch
     actor = RandomActor(env_builder)
     trajectory_1 = actor.unroll(20)
+    print(trajectory_1.step_type, trajectory_1.discount)
     # for el in trajectory_1:
     #     print(el.shape)
 

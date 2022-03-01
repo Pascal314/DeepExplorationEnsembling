@@ -46,7 +46,11 @@ class Learner:
 
     def params_for_actor(self) -> hk.Params:
         return self._params
-
+    
+    # Jitting this function appears to take very long, scaling with the batch size (but why?)
+    # this triggers other jits. Most notably, this triggers a jit on the lower level functions such as
+    # gram matrix median trick, td lambda loss etc. These all heavily scale with batch size probably
+    # maybe these could cautiously be compiled first.
     @partial(jax.jit, static_argnums=0)
     def update(self, 
         params: hk.Params,
@@ -54,13 +58,19 @@ class Learner:
         target_params: hk.Params,
         batch: util.Trajectory,
     ) -> Tuple[hk.Params, optax.OptState, Dict]:
+        # print('Surely this happens')
         (_, logs), grads = jax.value_and_grad(self._model.loss, has_aux=True)(params, target_params, batch, self._lambda, self._discount)
+        # print('Wow!')
         grad_norm_unclipped = sum( jax.tree_leaves(jax.tree_map(lambda x: jnp.sum(x**2), grads)))
+        # print('Cool!')
         updates, opt_state = self._opt.update(grads, opt_state)
+        # print('Amazing!')
         params = optax.apply_updates(params, updates)
+        # print('What?')
         logs.update({
             'grad_norm_unclipped': grad_norm_unclipped
         })
+        # print('How?')
         return params, opt_state, logs
 
     def sample_batch(self):
@@ -78,23 +88,29 @@ class Learner:
 
         num_frames = ray.get(self._replaybuffer.get_num_frames.remote())
         while num_frames < self._batch_size:
-            print(num_frames)
+            print('num_frames:', num_frames)
             time.sleep(0.5)
             num_frames = ray.get(self._replaybuffer.get_num_frames.remote())
 
+        print('Starting training', num_frames)
+        print(jax.tree_map(lambda x: x.shape, params))
         for i in steps:
             batch = self.sample_batch()
+            # print("This happens!")
             params, opt_state, logs = self.update(params, opt_state, target_params, batch)
+            # print("This happens")
             self._parameter_server.update_params.remote(params)
+            # print('This naver happens')
 
-            # Don\t do this every step
-            if i % 100 == 0:
+            # This should clearly be a hyperparameter and not some magic number
+            if i % 500 == 0:
                 target_params = params
 
             num_frames = ray.get(self._replaybuffer.get_num_frames.remote())
-            # print('logger:', logs)
+
             logs.update({
                 'num_frames': num_frames,
             })
-            # self._logger.write(logs)
+            if i % 100 == 0:
+                self._logger.write(logs)
         self._done = True

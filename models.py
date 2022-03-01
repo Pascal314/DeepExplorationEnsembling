@@ -31,11 +31,16 @@ class fSVGDEnsemble():
         discount: float,
     ) -> Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]:
         logs = {}
-        q_tm1 = self.ensemble_transformed.apply(params, trajectories)[:, :-1]
-        q_t = self.ensemble_transformed.apply(target_params, trajectories)[:, 1:]
+        # print(trajectories.observation.shape)
+        vapply = jax.vmap(self.ensemble_transformed.apply, in_axes=(None, 0), out_axes=1)
+
+        q_tm1 = vapply(params, trajectories)[:, :, :-1]
+        # print(q_tm1.shape)
+        q_t = vapply(target_params, trajectories)[:, :, 1:]
         td_loss = multi_step_lambda(q_tm1, q_t, trajectories, lambda_, discount)
 
         Kij = gram_matrix_median_trick(q_tm1)
+        print(Kij.shape)
         fSVGD_loss = jnp.sum(Kij, axis=1) / jax.lax.stop_gradient(jnp.sum(Kij, axis=1))
 
         loss = td_loss + fSVGD_loss
@@ -45,22 +50,28 @@ class fSVGDEnsemble():
         logs['fSVGD_loss'] = fSVGD_loss
         return jnp.mean(loss, axis=0), logs
 
-
+@jax.jit
 def multi_step_lambda(q_tm1, q_t, trajectories, lambda_, discount):
     # From the rlax q_lambda implementation
-    v_t = jnp.max(q_t, axis=-1)
-    r_t = trajectories.reward[1:]
-    a_tm1 = trajectories.action[:-1]
-    discount_t = trajectories.discount[1:] * discount
-    # print(r_t.shape, v_t.shape, q_tm1.shape, q_t.shape)
-
-    target_tm1 = jax.vmap(rlax.lambda_returns, in_axes=(None, None, 0, None))(r_t, discount_t, v_t, lambda_)
+    v_t = jnp.max(q_t, axis=-1) # ensemble member, batch, time
+    r_t = trajectories.reward[:, 1:] # batch, time
+    a_tm1 = trajectories.action[:, :-1] # batch, time
+    discount_t = trajectories.discount[:, 1:] * discount # batch, time
+    # print(r_t.shape, v_t.shape, q_tm1.shape, q_t.shape, trajectories.reward.shape)
+    
+    # this needs to be vmapped over the batch and over the ensemble
+    target_tm1 = jax.vmap(
+        jax.vmap(
+            rlax.lambda_returns, 
+            in_axes=(None, None, 0, None)), # Second vmap is over the ensemble
+        in_axes=(0, 0, 1, None), out_axes=1 # First vmap is over the batch
+    )(r_t, discount_t, v_t, lambda_)
     # print(r_t.shape, v_t.shape, target_tm1.shape, q_tm1.shape, q_t.shape)
     action_ohe = jax.nn.one_hot(a_tm1, num_classes=q_tm1.shape[-1])
     td_loss = jnp.mean( (jax.lax.stop_gradient(target_tm1) - jnp.sum(q_tm1 * action_ohe, axis=-1)) **2)
     return td_loss
 
-
+# Do I want the batch to disappear in jnp.ravel?
 dmatrix = jax.vmap(jax.vmap(lambda x, y: jnp.sum( ((jnp.ravel(x) - jnp.ravel(y))**2) ), in_axes=(None, 0)), in_axes=(0, None))
 
 @jax.jit
