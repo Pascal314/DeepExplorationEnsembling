@@ -23,7 +23,7 @@ class ReplayBuffer:
         # stack or concatenate?
         # old_batch = jax.tree_multimap(lambda *x: np.concatenate(x, axis=0), *old_batch)
         # fresh_batch = jax.tree_multimap(lambda *x: np.concatenate(x, axis=0), *fresh_batch)
-        batch = jax.tree_multimap(lambda *x: np.stack(x, axis=0), *(old_batch + fresh_batch))
+        batch = jax.tree_multimap(lambda *x: np.stack(x, axis=0), *(old_batch + fresh_batch)), self.num_frames
         return batch
         
     def get_num_frames(self):

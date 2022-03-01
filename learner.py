@@ -15,7 +15,7 @@ import ray
 import time
 from parameter_server import ParameterServer
 
-@ray.remote
+@ray.remote(num_gpus=1)
 class Learner:
     def __init__(
         self,

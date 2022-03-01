@@ -9,7 +9,7 @@ import util
 from typing import List
 import numpy as np
 from functools import partial
-from typing import NamedTuple
+from typing import NamedTuple, Dict
 from replaybuffer import ReplayBuffer
 from parameter_server import ParameterServer
 import logging
@@ -59,7 +59,7 @@ class Actor:
         self._memory_buffer = memory_buffer
         self._timestep = self._env.reset()
         # self._agent_state = agent.initial_state(None)
-        self._traj: List[Tuple[dm_env.TimeStep, AgentOutput]] = []
+        self._traj: List[Dict[dm_env.TimeStep, AgentOutput]] = []
         self._rng_key = jax.random.PRNGKey(rng_seed)
         self._parameter_server = parameter_server
         self._memory_buffer = memory_buffer
@@ -68,7 +68,7 @@ class Actor:
         self._episode_return = 0.
         self._n_networks = n_networks
         self._convert_params = convert_params
-        self._average_episode_return = deque(maxlen=100)
+        self._average_episode_return: deque[float] = deque(maxlen=100)
 
     def unroll(self, params: hk.Params,
                unroll_length: int) -> util.Trajectory:

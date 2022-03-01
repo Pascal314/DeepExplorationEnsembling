@@ -1,5 +1,7 @@
 import jax
 import optax
+import haiku as hk
+# Make sure to export XLA_PYTHON_CLIENT_PREALLOCATE=false or something similar so that this main process does not eat all GPU memory
 from bsuite.environments import catch
 from replaybuffer import ReplayBuffer
 from learner import Learner
@@ -7,7 +9,6 @@ from models import fSVGDEnsemble
 from nets import CatchNet
 import ray
 from actor import Actor, DQNAgent
-import haiku as hk
 import util
 from parameter_server import ParameterServer
 import time
@@ -16,14 +17,16 @@ import logging
 
 replay_buffer_size = 10000
 short_term_capacity = 20
-batch_size = 4
+batch_size = 64
 learning_rate = 1e-3
 random_seed = 42
 lambda_ = 0.5
 discount_factor = 0.99
-n_networks = 3
+n_networks = 100
 unroll_length = 20
-n_actors = 1
+n_actors = 10
+
+#batch size and n_actors can be used to trade off between actor and learner speed.
 
 def main():
     ray.init()
@@ -75,16 +78,13 @@ def main():
         parameter_server=parameter_server
     ) for i in range(n_actors)]
 
-    print(ray.get(replaybuffer.get_num_frames.remote()))
     learner.run.remote()
     # this is stupid
     while not ray.get(parameter_server.get_params_set.remote()):
         print(time.sleep(0.5))
         print('Waiting for learner..')
     start_params = ray.get(parameter_server.get_params.remote())
-    ray.get([actor.run.remote(100000) for actor in actors])
-    print(ray.get(replaybuffer.get_num_frames.remote()))
-
+    ray.get([actor.run.remote(1000) for actor in actors])
     end_params = ray.get(parameter_server.get_params.remote())
 
     print(jax.tree_multimap(lambda x, y: np.sum((x - y)**2), start_params, end_params))
