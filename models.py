@@ -45,7 +45,7 @@ class fSVGDEnsemble():
         logs['fSVGD_loss'] = fSVGD_loss
         return jnp.mean(loss, axis=0), logs
 
-
+@jax.jit
 def multi_step_lambda(q_tm1, q_t, trajectories, lambda_, discount):
     # From the rlax q_lambda implementation
     v_t = jnp.max(q_t, axis=-1)

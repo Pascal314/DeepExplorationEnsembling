@@ -15,14 +15,15 @@ import numpy as np
 import logging
 
 replay_buffer_size = 10000
+short_term_capacity = 20
 batch_size = 4
 learning_rate = 1e-3
 random_seed = 42
 lambda_ = 0.5
 discount_factor = 0.99
-n_networks = 20
+n_networks = 3
 unroll_length = 20
-n_actors = 5
+n_actors = 1
 
 def main():
     ray.init()
@@ -35,7 +36,7 @@ def main():
     # print(timestep)
     num_actions = env_for_spec.action_spec().num_values
 
-    replaybuffer = ReplayBuffer.remote(replay_buffer_size)
+    replaybuffer = ReplayBuffer.remote(replay_buffer_size, short_term_capacity)
     parameter_server = ParameterServer.remote()
 
     net = hk.without_apply_rng(hk.transform(lambda x: CatchNet(num_actions)(x) ))
@@ -81,13 +82,13 @@ def main():
         print(time.sleep(0.5))
         print('Waiting for learner..')
     start_params = ray.get(parameter_server.get_params.remote())
-    ray.get([actor.run.remote(10000) for actor in actors])
+    ray.get([actor.run.remote(100000) for actor in actors])
     print(ray.get(replaybuffer.get_num_frames.remote()))
 
     end_params = ray.get(parameter_server.get_params.remote())
 
     print(jax.tree_multimap(lambda x, y: np.sum((x - y)**2), start_params, end_params))
-    print(end_params)
+    # print(end_params)
 
     ray.shutdown()
 
