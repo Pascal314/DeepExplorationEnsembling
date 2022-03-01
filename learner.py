@@ -102,7 +102,7 @@ class Learner:
             self._parameter_server.update_params.remote(params)
             # print('This naver happens')
 
-            # This should clearly be a hyperparamater and not some magic number
+            # This should clearly be a hyperparameter and not some magic number
             if i % 500 == 0:
                 target_params = params
 
