@@ -14,6 +14,7 @@ from replaybuffer import ReplayBuffer
 from parameter_server import ParameterServer
 import logging
 from collections import deque
+import time
 
 
 class AgentOutput(NamedTuple):
@@ -128,6 +129,7 @@ class Actor:
 
     
     def run(self, n_episodes):
+        start_time = time.time()
         for i in range(n_episodes):
             params = ray.get(self.pull_params())
             # params = jax.device_put(params)
@@ -137,6 +139,6 @@ class Actor:
             self.unroll_and_push(params)
 
             if (i % 100 == 0) and (i > 0):
-                self._logger.write(f'average reward: {np.mean(self._average_episode_return)}')
+                self._logger.write(f'average reward: {np.mean(self._average_episode_return)}, throughput: {(i * self._unroll_length) / (time.time() - start_time):.2f}')
 
 

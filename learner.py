@@ -14,6 +14,7 @@ import models
 import ray
 import time
 from parameter_server import ParameterServer
+import time
 
 @ray.remote(num_gpus=1)
 class Learner:
@@ -47,10 +48,6 @@ class Learner:
     def params_for_actor(self) -> hk.Params:
         return self._params
     
-    # Jitting this function appears to take very long, scaling with the batch size (but why?)
-    # this triggers other jits. Most notably, this triggers a jit on the lower level functions such as
-    # gram matrix median trick, td lambda loss etc. These all heavily scale with batch size probably
-    # maybe these could cautiously be compiled first.
     @partial(jax.jit, static_argnums=0)
     def update(self, 
         params: hk.Params,
@@ -94,6 +91,7 @@ class Learner:
 
         print('Starting training', num_frames)
         print(jax.tree_map(lambda x: x.shape, params))
+        start_time = time.time()
         for i in steps:
             batch = self.sample_batch()
             # print("This happens!")
@@ -103,7 +101,7 @@ class Learner:
             # print('This naver happens')
 
             # This should clearly be a hyperparameter and not some magic number
-            if i % 500 == 0:
+            if i % 50 == 0:
                 target_params = params
 
             num_frames = ray.get(self._replaybuffer.get_num_frames.remote())
@@ -111,6 +109,12 @@ class Learner:
             logs.update({
                 'num_frames': num_frames,
             })
+
+            throughput = (i * batch[0].reward.shape[0] * batch[0].reward.shape[1]) / (time.time() - start_time)
+            logs.update({
+                'throughput': f'{throughput:.2f}',
+            })
+
             if i % 100 == 0:
                 self._logger.write(logs)
         self._done = True

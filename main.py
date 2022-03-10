@@ -1,8 +1,9 @@
 import jax
 import optax
 import haiku as hk
-# Make sure to export XLA_PYTHON_CLIENT_PREALLOCATE=false or something similar so that this main process does not eat all GPU memory
-from bsuite.environments import catch
+# Make sure to 
+# export XLA_PYTHON_CLIENT_PREALLOCATE=false or something similar so that this main process does not eat all GPU memory
+from bsuite.environments import catch, deep_sea
 from replaybuffer import ReplayBuffer
 from learner import Learner
 from models import fSVGDEnsemble
@@ -14,11 +15,12 @@ from parameter_server import ParameterServer
 import time
 import numpy as np
 import logging
+import pickle
 
 replay_buffer_size = 10000
 short_term_capacity = 20
 batch_size = 64
-learning_rate = 1e-3
+learning_rate = 1e-2
 random_seed = 42
 lambda_ = 0.5
 discount_factor = 0.99
@@ -31,6 +33,7 @@ n_actors = 10
 def main():
     ray.init()
     build_env = catch.Catch
+    build_env = lambda: deep_sea.DeepSea(30, seed=42, mapping_seed=42)
     env_for_spec = build_env()
     timestep = env_for_spec.reset()
 
@@ -84,12 +87,11 @@ def main():
         print(time.sleep(0.5))
         print('Waiting for learner..')
     start_params = ray.get(parameter_server.get_params.remote())
-    ray.get([actor.run.remote(1000) for actor in actors])
+    ray.get([actor.run.remote(10000) for actor in actors])
     end_params = ray.get(parameter_server.get_params.remote())
 
-    print(jax.tree_multimap(lambda x, y: np.sum((x - y)**2), start_params, end_params))
-    # print(end_params)
-
+    with open(f'params/params.pkl', 'wb') as outfile:
+        pickle.dump(end_params, outfile)
     ray.shutdown()
 
 main()

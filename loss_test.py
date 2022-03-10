@@ -1,5 +1,5 @@
 import jax
-from bsuite.environments import catch
+from bsuite.environments import catch, deep_sea
 import util
 from actor import AgentOutput
 import numpy as np
@@ -66,9 +66,10 @@ def multi_step_lambda(q_tm1, q_t, trajectories, lambda_, discount):
 
 if __name__ == '__main__':
     env_builder = catch.Catch
+    env_builder = lambda: deep_sea.DeepSea(10)
     actor = RandomActor(env_builder)
     trajectory_1 = actor.unroll(20)
-    print(trajectory_1.step_type, trajectory_1.discount)
+    print(trajectory_1.step_type, trajectory_1.discount, trajectory_1.observation)
     # for el in trajectory_1:
     #     print(el.shape)
 
