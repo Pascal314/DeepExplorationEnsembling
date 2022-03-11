@@ -40,10 +40,12 @@ class fSVGDEnsemble():
         q_t = vapply(target_params, trajectories)[:, :, 1:]
         td_loss = jnp.mean(multi_step_lambda(q_tm1, q_t, trajectories, lambda_, discount))
 
-        print(q_tm1.shape)
-        Kij = jax.vmap(jax.vmap(gram_matrix_median_trick, in_axes=1, out_axes=-1), in_axes=1, out_axes=-1)(q_tm1)
-        print(Kij.shape)
-        Kij = jnp.sum(Kij, axis=(-1, -2))
+        # print(q_tm1.shape)
+        # Kij = jax.vmap(jax.vmap(gram_matrix_median_trick, in_axes=1, out_axes=-1), in_axes=1, out_axes=-1)(q_tm1)
+        # print(Kij.shape)
+        # Kij = jnp.sum(Kij, axis=(-1, -2))
+
+        Kij = jax.vmap(gram_matrix_median_trick)(q_tm1)
 
         fSVGD_loss = jnp.mean(jnp.sum(Kij, axis=1) / jax.lax.stop_gradient(jnp.sum(Kij, axis=1)))
 
@@ -53,8 +55,8 @@ class fSVGDEnsemble():
         # logic: likelihood is supposed to scale with n_data, so should have a factor n_data / batch_size
         # both td loss and fsvgd loss are summed over the batch size, meaning that the factor batch size can just be ignored
         # and we add 1/n to fsvgd instead of n * td loss to make the loss more manageably small
-        # loss = td_loss + 1 / n_data * fSVGD_loss
-        loss = td_loss + fSVGD_loss
+        loss = td_loss + 1 / n_data * fSVGD_loss
+        # loss = td_loss + fSVGD_loss
 
         # logs['q_t'] = q_t
         # logs['q_tm1'] = q_tm1

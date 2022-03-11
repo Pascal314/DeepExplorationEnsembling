@@ -7,7 +7,7 @@ from bsuite.environments import catch, deep_sea
 from replaybuffer import ReplayBuffer
 from learner import Learner
 from models import fSVGDEnsemble
-from nets import CatchNet
+from nets import DeepSeaNet
 import ray
 from actor import Actor, DQNAgent
 import util
@@ -17,23 +17,24 @@ import numpy as np
 import logging
 import pickle
 
-replay_buffer_size = 10000
-short_term_capacity = 20
+replay_buffer_size = 100000
+short_term_capacity = 32
 batch_size = 64
 learning_rate = 1e-2
 random_seed = 42
 lambda_ = 0.5
 discount_factor = 0.99
 n_networks = 100
-unroll_length = 20
+unroll_length = 30
 n_actors = 10
+N = 30
 
 #batch size and n_actors can be used to trade off between actor and learner speed.
 
 def main():
     ray.init()
     build_env = catch.Catch
-    build_env = lambda: deep_sea.DeepSea(30, seed=42, mapping_seed=42)
+    build_env = lambda: deep_sea.DeepSea(N, seed=42, mapping_seed=42)
     env_for_spec = build_env()
     timestep = env_for_spec.reset()
 
@@ -45,7 +46,7 @@ def main():
     replaybuffer = ReplayBuffer.remote(replay_buffer_size, short_term_capacity)
     parameter_server = ParameterServer.remote()
 
-    net = hk.without_apply_rng(hk.transform(lambda x: CatchNet(num_actions)(x) ))
+    net = hk.without_apply_rng(hk.transform(lambda x: DeepSeaNet(num_actions)(x) ))
 
     logger = util.TempLogger()
 
@@ -87,7 +88,8 @@ def main():
         print(time.sleep(0.5))
         print('Waiting for learner..')
     start_params = ray.get(parameter_server.get_params.remote())
-    ray.get([actor.run.remote(10000) for actor in actors])
+    # osband2018 learns up until N=60 in 100k episodes = 100k * N frames
+    ray.get([actor.run.remote(1000) for actor in actors])
     end_params = ray.get(parameter_server.get_params.remote())
 
     with open(f'params/params.pkl', 'wb') as outfile:
