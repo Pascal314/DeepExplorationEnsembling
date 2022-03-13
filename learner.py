@@ -113,6 +113,7 @@ class Learner:
             throughput = (i * batch[0].reward.shape[0] * batch[0].reward.shape[1]) / (time.time() - start_time)
             logs.update({
                 'throughput': f'{throughput:.2f}',
+                'time': f'{time.time() - start_time:.2f}'
             })
 
             if i % 100 == 0:

@@ -4,8 +4,7 @@ import dm_env
 import jax
 
 class CatchNet(hk.Module):
-  """A simple neural network for catch."""
-
+    """A simple neural network for catch."""
     def __init__(self, num_actions, name=None):
         super().__init__(name=name)
         self._num_actions = num_actions

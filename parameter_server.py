@@ -5,6 +5,7 @@ import haiku as hk
 class ParameterServer:
     def __init__(self):
         self.params_set = False
+        self.params = None
 
     def get_params(self):
         if self.params_set:
@@ -22,3 +23,5 @@ class ParameterServer:
 
     def get_params_set(self):
         return self.params_set
+
+    

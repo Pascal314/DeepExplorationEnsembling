@@ -17,17 +17,20 @@ import numpy as np
 import logging
 import pickle
 
-replay_buffer_size = 100000
+replay_buffer_size = 10_000
 short_term_capacity = 32
-batch_size = 64
+batch_size = 32
 learning_rate = 1e-2
 random_seed = 42
 lambda_ = 0.5
 discount_factor = 0.99
 n_networks = 100
-unroll_length = 30
 n_actors = 10
-N = 30
+N = 30 # The environment size
+unroll_length = N
+total_episodes = 200_000
+total_steps = total_episodes * unroll_length
+rollouts_per_actor = total_steps // (unroll_length * n_actors)
 
 #batch size and n_actors can be used to trade off between actor and learner speed.
 
@@ -46,7 +49,12 @@ def main():
     replaybuffer = ReplayBuffer.remote(replay_buffer_size, short_term_capacity)
     parameter_server = ParameterServer.remote()
 
-    net = hk.without_apply_rng(hk.transform(lambda x: DeepSeaNet(num_actions)(x) ))
+    def forward(x):
+        out = DeepSeaNet(num_actions)(x)
+        prior = jax.lax.stop_gradient(DeepSeaNet(num_actions, name='prior')(x))
+        return out + prior
+
+    net = hk.without_apply_rng(hk.transform(forward))
 
     logger = util.TempLogger()
 
@@ -89,7 +97,7 @@ def main():
         print('Waiting for learner..')
     start_params = ray.get(parameter_server.get_params.remote())
     # osband2018 learns up until N=60 in 100k episodes = 100k * N frames
-    ray.get([actor.run.remote(1000) for actor in actors])
+    ray.get([actor.run.remote(rollouts_per_actor) for actor in actors])
     end_params = ray.get(parameter_server.get_params.remote())
 
     with open(f'params/params.pkl', 'wb') as outfile:
