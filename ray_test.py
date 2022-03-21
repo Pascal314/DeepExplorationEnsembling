@@ -11,6 +11,7 @@ class ReplayBuffer():
         self.memory = np.zeros(size, dtype=int)
         self.idx = 0
         self.size = size
+        self.stuff = None
     
     def get_memory(self):
         return self.memory
@@ -39,6 +40,9 @@ class Actor():
         for i in range(length):
             self.buffer.put_in_memory.remote(self.step())
 
+    def unroll_and_force(self, length):
+        for i in range(length):
+            self.buffer.stuff = self.step()
 
 
 ray.init()
@@ -52,7 +56,20 @@ workers = [Actor.remote(p[i], 3, buffer) for i in range(2)]
 # logging.info(workers)
 
 for _ in range(5):
-    # buffer.block_forever.remote()
-    ray.get([actor.unroll.remote(5) for actor in workers])
+    buffer.block_forever.remote()
+    ray.get([actor.unroll_and_force.remote(5) for actor in workers])
+    print(buffer.stuff)
     print(ray.get(buffer.get_memory.remote()))
 
+
+# @ray.remote
+# def f(x):
+#     return x**2
+
+# ray.init()
+# x = np.zeros(10,)
+# x_id = ray.put(x)
+# x[5] = 5
+# print(x)
+# print(ray.get(f.remote(x_id)))
+# ray.shutdown()

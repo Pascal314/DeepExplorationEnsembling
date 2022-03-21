@@ -42,43 +42,51 @@ class fSVGDEnsemble():
         q_t = vapply(target_params, trajectories)[:, :, 1:]
         td_loss = jnp.mean(multi_step_lambda(q_tm1, q_t, trajectories, lambda_, discount))
 
-        # print(q_tm1.shape)
-        # dummy_trajectories = util.Trajectory(
-        #     step_type=trajectories.step_type,
-        #     reward=trajectories.reward,
-        #     discount=trajectories.discount,
-        #     observation=np.random.normal(size=trajectories.observation.shape),
-        #     action=trajectories.action,
-        # )
-        # q_dummy = vapply(params, dummy_trajectories)[:, :, :-1]
-        # Kij = jax.vmap(jax.vmap(gram_matrix_median_trick, in_axes=1, out_axes=-1), in_axes=1, out_axes=-1)(q_dummy)
+        Kij = gram_matrix_median_trick(q_tm1)
 
-        Kij = jax.vmap(jax.vmap(gram_matrix_median_trick, in_axes=1, out_axes=-1), in_axes=1, out_axes=-1)(q_tm1)
-        # print(Kij.shape)
-        Kij = jnp.sum(Kij, axis=(-1, -2))
-
-        # Kij = jax.vmap(gram_matrix_median_trick)(q_tm1)
-
-        # fSVGD_loss = jnp.mean(jnp.sum(Kij, axis=1) / jax.lax.stop_gradient(jnp.sum(Kij, axis=1)))
         fSVGD_loss = jnp.mean(jnp.log(jnp.sum(Kij, axis=1)))
 
         batch_axes = trajectories.observation.shape[0:2]
         batch_size = batch_axes[0] * batch_axes[1] 
-        # loss = n_data / batch_size * td_loss + jnp.sum(fSVGD_loss)
-        # logic: likelihood is supposed to scale with n_data, so should have a factor n_data / batch_size
-        # both td loss and fsvgd loss are summed over the batch size, meaning that the factor batch size can just be ignored
-        # and we add 1/n to fsvgd instead of n * td loss to make the loss more manageably small
-        # loss = td_loss + 1 / n_data * fSVGD_loss
-        loss = td_loss + 1 / n_data * batch_size * fSVGD_loss
-        # loss = td_loss + fSVGD_loss
 
+        loss = td_loss + 1 / n_data * fSVGD_loss
 
-
-        # logs['q_t'] = q_t
-        # logs['q_tm1'] = q_tm1
         logs['td_loss'] = td_loss
         logs['fSVGD_loss'] = fSVGD_loss
         return loss, logs
+
+class PlainEnsemble():
+    def __init__(self, individual_transformed, n_networks):
+        self.individual_transformed = individual_transformed
+        vinit = jax.vmap(individual_transformed.init, in_axes=(0, None))
+        vapply = jax.vmap(individual_transformed.apply, in_axes=(0, None))
+        self.ensemble_transformed = hk.Transformed(init=lambda key, x: vinit(jax.random.split(key, num=n_networks), x), apply=vapply)
+    
+    def convert_params(self, params, i):
+        return jax.tree_map(lambda x: x[i], params)
+
+    def loss(
+        self, 
+        params: hk.Params, 
+        target_params: hk.Params,
+        batch: Tuple[util.Trajectory, int],
+        lambda_: float,
+        discount: float,
+    ) -> Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]:
+        logs = {}
+        trajectories, n_data = batch
+        # print(trajectories.observation.shape)
+        vapply = jax.vmap(self.ensemble_transformed.apply, in_axes=(None, 0), out_axes=1)
+
+        q_tm1 = vapply(params, trajectories)[:, :, :-1]
+        # print(q_tm1.shape)
+        q_t = vapply(target_params, trajectories)[:, :, 1:]
+        td_loss = jnp.mean(multi_step_lambda(q_tm1, q_t, trajectories, lambda_, discount))
+
+        loss = td_loss 
+        logs['td_loss'] = td_loss
+        return loss, logs
+
 
 @jax.jit
 def multi_step_lambda(q_tm1, q_t, trajectories, lambda_, discount):

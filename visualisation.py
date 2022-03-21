@@ -1,6 +1,19 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+from dm_env import TimeStep
+
+
+def create_every_state_in_dummy_timestep(N):
+    states = create_every_state(N)
+    dummy_timestep = TimeStep(
+        observation=states,
+        reward=None,
+        discount=None,
+        step_type=None
+    )
+    return dummy_timestep
+
 
 def create_every_state(N):
   states = np.zeros((N*N, N*N))
