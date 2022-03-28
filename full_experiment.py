@@ -11,10 +11,13 @@ for seed in seeds:
         for rpf_option in rpf_options:
             for fsvgd_option in fsvgd_options:
                 for N in N_options:
-                    ex.run(config_updates={
-                        'N': N,
-                        'random_seed': seed,
-                        'use_fsvgd': fsvgd_option,
-                        'use_rpf': rpf_option,
-                        'bias_init': init_bias,
-                    })
+                    if (seed == 1) and (init_bias == True) and (rpf_option == True) and (fsvgd_option) == True and (N < 40):
+                        continue
+                    else:
+                        ex.run(config_updates={
+                            'N': N,
+                            'random_seed': seed,
+                            'use_fsvgd': fsvgd_option,
+                            'use_rpf': rpf_option,
+                            'bias_init': init_bias,
+                        })

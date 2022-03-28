@@ -71,7 +71,7 @@ def run_experiment(
     ):
     ray.init()
     # build_env = catch.Catch
-    build_env = lambda: deep_sea.DeepSea(N, seed=42, mapping_seed=42)
+    build_env = lambda: deep_sea.DeepSea(N, seed=random_seed, mapping_seed=random_seed)
     env_for_spec = build_env()
     timestep = env_for_spec.reset()
 
