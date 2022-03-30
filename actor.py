@@ -51,7 +51,8 @@ class Actor:
         rng_seed: int,
         logger: Any,
         convert_params: Callable,
-        parameter_server: ParameterServer
+        parameter_server: ParameterServer,
+        trajectories_per_params: int = 1
     ):
         self._agent = agent
         self._env = env_builder()
@@ -69,6 +70,7 @@ class Actor:
         self._n_networks = n_networks
         self._convert_params = convert_params
         self._episode_return_list: deque[float] = deque(maxlen=100)
+        self._trajectories_per_params = trajectories_per_params
 
     def unroll(self, params: hk.Params,
                unroll_length: int) -> util.Trajectory:
@@ -88,9 +90,6 @@ class Actor:
 
             if timestep.last():
                 self._episode_return += timestep.reward
-                logging.info({
-                    'episode_return': self._episode_return,
-                })
                 self._episode_return_list.append(self._episode_return)
                 self._episode_return = 0.
             else:
@@ -125,13 +124,14 @@ class Actor:
     def pull_params(self):
         return ray.get(self._parameter_server.get_params.remote())
 
-    def run(self, n_episodes):
+    def run(self, n_trajectories):
         start_time = time.time()
-        for i in range(n_episodes):
-            params = self.pull_params()
-            self._rng_key, subkey = jax.random.split(self._rng_key)
-            ensemble_idx = jax.random.randint(subkey, (), 0, self._n_networks)    
-            params = self._convert_params(params, ensemble_idx)
+        for i in range(n_trajectories):
+            if (i % self._trajectories_per_params) == 0:
+                params = self.pull_params()
+                self._rng_key, subkey = jax.random.split(self._rng_key)
+                ensemble_idx = jax.random.randint(subkey, (), 0, self._n_networks)    
+                params = self._convert_params(params, ensemble_idx)
             self.unroll_and_push(params)
             if (i % 100 == 0) and (i > 0):
                 self._logger.write(f'average reward: {np.mean(self._episode_return_list)}, throughput: {(i * self._unroll_length) / (time.time() - start_time):.2f}')

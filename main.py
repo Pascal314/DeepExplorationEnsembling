@@ -37,8 +37,8 @@ def config():
     discount_factor = 0.99
     n_networks = 20
     n_actors = 5
-    N = 60 # The environment size
-    unroll_length = N
+    N = 10 # The environment size
+    unroll_length = 6
     total_episodes = 100_000
     total_steps = total_episodes * unroll_length
     rollouts_per_actor = total_steps // (unroll_length * n_actors)
