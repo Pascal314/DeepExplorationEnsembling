@@ -31,7 +31,8 @@ class Learner:
         lambda_: float,
         replaybuffer: ReplayBuffer,
         logger: Any,
-        parameter_servers: List[ParameterServer]
+        parameter_servers: List[ParameterServer],
+        target_update: float,
     ):
         self._opt = opt
         self._model = model
@@ -44,6 +45,7 @@ class Learner:
         self._logger = logger
         self._parameter_servers = parameter_servers
         self._discount = discount_factor
+        self._target_update = target_update
 
 
         params_id = ray.put(self._params)
@@ -103,8 +105,11 @@ class Learner:
             self.push_params()
 
             # This should clearly be a hyperparameter and not some magic number
-            if i % 50 == 0:
-                self._target_params = self._params.copy()
+            self._target_params = jax.tree_multimap(
+                lambda x, y: self._target_update * x + (1 - self._target_update) * y,
+                self._target_params, 
+                self._params
+            )
 
             num_frames = ray.get(self._replaybuffer.get_num_frames.remote())
 
