@@ -1,7 +1,7 @@
 import jax.numpy as jnp
 import jax
 from collections import deque
-from typing import Tuple, Dict, Any
+from typing import Tuple, Dict, Any, List
 import random
 import optax
 import haiku as hk
@@ -14,8 +14,11 @@ import models
 import ray
 import time
 from parameter_server import ParameterServer
+import time
+import math
+import numpy as np
 
-@ray.remote
+@ray.remote(num_gpus=1)
 class Learner:
     def __init__(
         self,
@@ -28,7 +31,8 @@ class Learner:
         lambda_: float,
         replaybuffer: ReplayBuffer,
         logger: Any,
-        parameter_server: ParameterServer
+        parameter_servers: List[ParameterServer],
+        target_update: float,
     ):
         self._opt = opt
         self._model = model
@@ -39,18 +43,19 @@ class Learner:
         self._batch_size = batch_size
         self._done = False
         self._logger = logger
-        self._parameter_server = parameter_server
-        self._parameter_server.init_params.remote(self._params)
+        self._parameter_servers = parameter_servers
         self._discount = discount_factor
+        self._target_update = target_update
 
 
-    def params_for_actor(self) -> hk.Params:
-        return self._params
+        params_id = ray.put(self._params)
+        ray.get([server.init_params.remote(params_id) for server in self._parameter_servers])
+
+
+    def push_params(self):
+        params_id = ray.put(self._params)
+        ray.get([server.update_params.remote(params_id) for server in self._parameter_servers])
     
-    # Jitting this function appears to take very long, scaling with the batch size (but why?)
-    # this triggers other jits. Most notably, this triggers a jit on the lower level functions such as
-    # gram matrix median trick, td lambda loss etc. These all heavily scale with batch size probably
-    # maybe these could cautiously be compiled first.
     @partial(jax.jit, static_argnums=0)
     def update(self, 
         params: hk.Params,
@@ -79,10 +84,7 @@ class Learner:
 
     def run(self, max_iterations: int = -1):
         num_frames = 0
-        
-        params = self._params
-        target_params = self._target_params
-        opt_state = self._opt.init(params)
+        opt_state = self._opt.init(self._params)
 
         steps = range(max_iterations) if max_iterations != -1 else itertools.count()
 
@@ -93,24 +95,34 @@ class Learner:
             num_frames = ray.get(self._replaybuffer.get_num_frames.remote())
 
         print('Starting training', num_frames)
-        print(jax.tree_map(lambda x: x.shape, params))
+        print('params:', jax.tree_map(lambda x: x.shape, self._params))
+        print(f'total_params:  {np.sum(jax.tree_leaves(jax.tree_map(lambda x: math.prod(x.shape), self._params)))}')
+    
+        start_time = time.time()
         for i in steps:
             batch = self.sample_batch()
-            # print("This happens!")
-            params, opt_state, logs = self.update(params, opt_state, target_params, batch)
-            # print("This happens")
-            self._parameter_server.update_params.remote(params)
-            # print('This naver happens')
+            self._params, opt_state, logs = self.update(self._params, opt_state, self._target_params, batch)
+            self.push_params()
 
             # This should clearly be a hyperparameter and not some magic number
-            if i % 500 == 0:
-                target_params = params
+            self._target_params = jax.tree_multimap(
+                lambda x, y: self._target_update * x + (1 - self._target_update) * y,
+                self._target_params, 
+                self._params
+            )
 
             num_frames = ray.get(self._replaybuffer.get_num_frames.remote())
 
             logs.update({
                 'num_frames': num_frames,
             })
+
+            throughput = (i * batch[0].reward.shape[0] * batch[0].reward.shape[1]) / (time.time() - start_time)
+            logs.update({
+                'throughput': f'{throughput:.2f}',
+                'time': f'{time.time() - start_time:.2f}'
+            })
+
             if i % 100 == 0:
                 self._logger.write(logs)
         self._done = True

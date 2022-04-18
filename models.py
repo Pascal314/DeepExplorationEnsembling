@@ -4,6 +4,8 @@ import util
 import jax
 import jax.numpy as jnp
 import rlax
+from util import Trajectory
+import numpy as np
 
 class Model(NamedTuple):
     ensemble_transformed: hk.Transformed
@@ -26,29 +28,65 @@ class fSVGDEnsemble():
         self, 
         params: hk.Params, 
         target_params: hk.Params,
-        trajectories: util.Trajectory,
+        batch: Tuple[util.Trajectory, int],
         lambda_: float,
         discount: float,
     ) -> Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]:
         logs = {}
+        trajectories, n_data = batch
         # print(trajectories.observation.shape)
         vapply = jax.vmap(self.ensemble_transformed.apply, in_axes=(None, 0), out_axes=1)
 
         q_tm1 = vapply(params, trajectories)[:, :, :-1]
         # print(q_tm1.shape)
         q_t = vapply(target_params, trajectories)[:, :, 1:]
-        td_loss = multi_step_lambda(q_tm1, q_t, trajectories, lambda_, discount)
+        td_loss = jnp.mean(multi_step_lambda(q_tm1, q_t, trajectories, lambda_, discount))
 
         Kij = gram_matrix_median_trick(q_tm1)
-        print(Kij.shape)
-        fSVGD_loss = jnp.sum(Kij, axis=1) / jax.lax.stop_gradient(jnp.sum(Kij, axis=1))
 
-        loss = td_loss + fSVGD_loss
-        # logs['q_t'] = q_t
-        # logs['q_tm1'] = q_tm1
+        fSVGD_loss = jnp.mean(jnp.log(jnp.sum(Kij, axis=1)))
+
+        batch_axes = trajectories.observation.shape[0:2]
+        batch_size = batch_axes[0] * batch_axes[1] 
+
+        loss = td_loss + 1 / n_data * fSVGD_loss
+
         logs['td_loss'] = td_loss
         logs['fSVGD_loss'] = fSVGD_loss
-        return jnp.mean(loss, axis=0), logs
+        return loss, logs
+
+class PlainEnsemble():
+    def __init__(self, individual_transformed, n_networks):
+        self.individual_transformed = individual_transformed
+        vinit = jax.vmap(individual_transformed.init, in_axes=(0, None))
+        vapply = jax.vmap(individual_transformed.apply, in_axes=(0, None))
+        self.ensemble_transformed = hk.Transformed(init=lambda key, x: vinit(jax.random.split(key, num=n_networks), x), apply=vapply)
+    
+    def convert_params(self, params, i):
+        return jax.tree_map(lambda x: x[i], params)
+
+    def loss(
+        self, 
+        params: hk.Params, 
+        target_params: hk.Params,
+        batch: Tuple[util.Trajectory, int],
+        lambda_: float,
+        discount: float,
+    ) -> Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]:
+        logs = {}
+        trajectories, n_data = batch
+        # print(trajectories.observation.shape)
+        vapply = jax.vmap(self.ensemble_transformed.apply, in_axes=(None, 0), out_axes=1)
+
+        q_tm1 = vapply(params, trajectories)[:, :, :-1]
+        # print(q_tm1.shape)
+        q_t = vapply(target_params, trajectories)[:, :, 1:]
+        td_loss = jnp.mean(multi_step_lambda(q_tm1, q_t, trajectories, lambda_, discount))
+
+        loss = td_loss 
+        logs['td_loss'] = td_loss
+        return loss, logs
+
 
 @jax.jit
 def multi_step_lambda(q_tm1, q_t, trajectories, lambda_, discount):
@@ -68,7 +106,7 @@ def multi_step_lambda(q_tm1, q_t, trajectories, lambda_, discount):
     )(r_t, discount_t, v_t, lambda_)
     # print(r_t.shape, v_t.shape, target_tm1.shape, q_tm1.shape, q_t.shape)
     action_ohe = jax.nn.one_hot(a_tm1, num_classes=q_tm1.shape[-1])
-    td_loss = jnp.mean( (jax.lax.stop_gradient(target_tm1) - jnp.sum(q_tm1 * action_ohe, axis=-1)) **2)
+    td_loss = jnp.sum( (jax.lax.stop_gradient(target_tm1) - jnp.sum(q_tm1 * action_ohe, axis=-1)) **2, axis=(1, 2))
     return td_loss
 
 # Do I want the batch to disappear in jnp.ravel?
@@ -96,4 +134,4 @@ def gram_matrix_median_trick(x):
     n = x.shape[0]
     distance_matrix = dmatrix(x, jax.lax.stop_gradient(x))
     median = jax.lax.stop_gradient(compute_median(distance_matrix.flatten()))
-    return jnp.exp(-distance_matrix / (median / jnp.log(n)))
+    return jnp.exp(-distance_matrix / (1e-12 + median / jnp.log(n)))

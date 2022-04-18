@@ -9,11 +9,12 @@ import util
 from typing import List
 import numpy as np
 from functools import partial
-from typing import NamedTuple
+from typing import NamedTuple, Dict
 from replaybuffer import ReplayBuffer
 from parameter_server import ParameterServer
 import logging
 from collections import deque
+import time
 
 
 class AgentOutput(NamedTuple):
@@ -36,7 +37,6 @@ class DQNAgent():
         action = jnp.argmax(Q_values)
         return AgentOutput(action=action)
 
-@ray.remote
 class Actor:
     """Manages the state of a single agent/environment interaction loop."""
 
@@ -51,7 +51,8 @@ class Actor:
         rng_seed: int,
         logger: Any,
         convert_params: Callable,
-        parameter_server: ParameterServer
+        parameter_server: ParameterServer,
+        trajectories_per_params: int = 1
     ):
         self._agent = agent
         self._env = env_builder()
@@ -59,7 +60,7 @@ class Actor:
         self._memory_buffer = memory_buffer
         self._timestep = self._env.reset()
         # self._agent_state = agent.initial_state(None)
-        self._traj: List[Tuple[dm_env.TimeStep, AgentOutput]] = []
+        self._traj: List[Dict[dm_env.TimeStep, AgentOutput]] = []
         self._rng_key = jax.random.PRNGKey(rng_seed)
         self._parameter_server = parameter_server
         self._memory_buffer = memory_buffer
@@ -68,7 +69,8 @@ class Actor:
         self._episode_return = 0.
         self._n_networks = n_networks
         self._convert_params = convert_params
-        self._average_episode_return = deque(maxlen=100)
+        self._episode_return_list: deque[float] = deque(maxlen=100)
+        self._trajectories_per_params = trajectories_per_params
 
     def unroll(self, params: hk.Params,
                unroll_length: int) -> util.Trajectory:
@@ -88,10 +90,7 @@ class Actor:
 
             if timestep.last():
                 self._episode_return += timestep.reward
-                logging.info({
-                    'episode_return': self._episode_return,
-                })
-                self._average_episode_return.append(self._episode_return)
+                self._episode_return_list.append(self._episode_return)
                 self._episode_return = 0.
             else:
                 self._episode_return += timestep.reward or 0.
@@ -100,8 +99,7 @@ class Actor:
             # already takes care of this for us.
 
         # Pack the trajectory and reset parent state.
-        trajectory = jax.device_get(self._traj)
-        trajectory = jax.tree_multimap(lambda *xs: np.stack(xs), *trajectory)
+        trajectory = jax.tree_multimap(lambda *xs: np.stack(xs), *self._traj)
         trajectory = util.Trajectory(
             step_type=trajectory['timestep'].step_type,
             reward=trajectory['timestep'].reward,
@@ -124,19 +122,49 @@ class Actor:
         self._memory_buffer.push.remote(trajectory)
 
     def pull_params(self):
-        return self._parameter_server.get_params.remote()
+        return ray.get(self._parameter_server.get_params.remote())
 
-    
-    def run(self, n_episodes):
+    def run(self, n_trajectories):
+        start_time = time.time()
+        for i in range(n_trajectories):
+            if (i % self._trajectories_per_params) == 0:
+                params = self.pull_params()
+                self._rng_key, subkey = jax.random.split(self._rng_key)
+                ensemble_idx = jax.random.randint(subkey, (), 0, self._n_networks)    
+                params = self._convert_params(params, ensemble_idx)
+            self.unroll_and_push(params)
+            if (i % 100 == 0) and (i > 0):
+                self._logger.write(f'average reward: {np.mean(self._episode_return_list)}, throughput: {(i * self._unroll_length) / (time.time() - start_time):.2f}')
+
+@ray.remote
+class RemoteActor(Actor):
+    pass
+
+
+@ray.remote
+class EvalActor(Actor):
+    def eval_unroll(self, params: hk.Params, max_unroll_length: int) -> float:
+        timestep = self._env.reset()
+        episode_return = 0.
+        unroll_length = 0
+        while (not timestep.last() and unroll_length < max_unroll_length):
+            timestep = util.preprocess_step(timestep)
+            agent_out = self._agent.step(params, timestep)
+            timestep = self._env.step(agent_out.action)
+            episode_return += timestep.reward or 0.
+            unroll_length += 1
+        return episode_return
+
+    def evaluate(self, n_episodes, max_unroll_length):
+        params = self.pull_params()
+        n_frames = ray.get(self._memory_buffer.get_num_frames.remote())
+        episode_returns = []
         for i in range(n_episodes):
-            params = ray.get(self.pull_params())
-            # params = jax.device_put(params)
             self._rng_key, subkey = jax.random.split(self._rng_key)
             ensemble_idx = jax.random.randint(subkey, (), 0, self._n_networks)    
-            params = self._convert_params(params, ensemble_idx)        
-            self.unroll_and_push(params)
-
-            if (i % 100 == 0) and (i > 0):
-                self._logger.write(f'average reward: {np.mean(self._average_episode_return)}')
-
-
+            sub_params = self._convert_params(params, ensemble_idx)        
+            episode_returns.append(self.eval_unroll(params=sub_params, max_unroll_length=max_unroll_length))
+        return {
+            'mean_return': np.mean(episode_returns),
+            'n_frames': n_frames,
+        }

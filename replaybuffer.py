@@ -20,10 +20,7 @@ class ReplayBuffer:
     def sample(self, batch_size):
         old_batch = random.choices(self.long_term_buffer, k=batch_size // 2)
         fresh_batch = random.choices(self.short_term_buffer, k=batch_size // 2)
-        # stack or concatenate?
-        # old_batch = jax.tree_multimap(lambda *x: np.concatenate(x, axis=0), *old_batch)
-        # fresh_batch = jax.tree_multimap(lambda *x: np.concatenate(x, axis=0), *fresh_batch)
-        batch = jax.tree_multimap(lambda *x: np.stack(x, axis=0), *(old_batch + fresh_batch))
+        batch = jax.tree_multimap(lambda *x: np.stack(x, axis=0), *(old_batch + fresh_batch)), self.num_frames
         return batch
         
     def get_num_frames(self):
